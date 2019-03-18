@@ -33,7 +33,7 @@ class: middle, center
 
 ---
 
-# What I'll be talking about
+# I'll be talking about
 
 * Public domain
 * Last step: calculate and map emissions
@@ -69,16 +69,14 @@ class: middle, center
 
 * Encoded 6 bit binary ASCII format
 * Position (GNSS); timestamp; vessel type; vessel ID
-* Year 2014: 2 billion messages - 260GB
 * Fuel use from ship technical specifications
+* Year 2014: 2 billion messages - 260GB
 
 </br>
 ## Pre-processed
 
 * 10GB .csv: fuel use/ship type/trip type/1km x 1km grid square
 
-</br>
-$$Fuel use_f . {Emission factor}_p=Emission_p$$
 
 ---
 
@@ -88,7 +86,7 @@ $$Fuel use_f . {Emission factor}_p=Emission_p$$
 * Annually reproducible workflow
   * Efficient
   * Modifiable
-  * Easy to Rre-purpose
+  * Easy to re-purpose
   * Transparent - auditing
 
 * Plays with legacy systems
@@ -99,9 +97,9 @@ $$Fuel use_f . {Emission factor}_p=Emission_p$$
 
 ---
 
-* Import
-* Explore
-* Communicate
+# Pipeline
+
+.center[![:scale 100%](images/se_flow.png)]
 
 ---
 
