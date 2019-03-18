@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="" xml:lang="">
+  <head>
+    <title>Shipping emissions</title>
+    <meta charset="utf-8" />
+    <meta name="author" content="Mark Ruddy" />
+    <meta name="date" content="2019-03-19" />
+    <link href="libs/remark-css/shinobi_tweak.css" rel="stylesheet" />
+    <link href="libs/remark-css/tamu-fonts.css" rel="stylesheet" />
+  </head>
+  <body>
+    <textarea id="source">
+class: center, middle, inverse, title-slide
+
+# Shipping emissions
+## Getting closer to the funnel
+### </br>Mark Ruddy
+### 2019-03-19
+
+---
+
+
+
+
+layout: true
+
+background-color: var(--main-color4)
+
+---
+class: middle, center
+
+# Annual atmospheric pollution from UK shipping
+
+&lt;iframe width="700" height="500" src="https://ricardo-aea.maps.arcgis.com/apps/StorytellingSwipe/index.html?appid=b52b396c0f314723a166aa552209f544" frameborder="0" allow="encrypted-media" allowfullscreen&gt;&lt;/iframe&gt;
+
+---
+
+# What I'll be talking about
+
+* Public domain
+* Last step: calculate and map emissions
+* Journey: personal thoughts and experiences
+* Improvements
+
+--
+
+&lt;/br&gt;
+
+# What I *won't* be talking about
+
+* Client/employer confidentiality
+* IP
+* **Group effort!**
+
+
+---
+
+# AIS (Automtic Identification System) data
+
+.center[![:scale 70%](images/ais.jpg)]
+.small[Image credit: ][Aeromarine SRT](https://gmdsstesters.com/)
+
+&lt;/br&gt;
+.center[*YYYY-MM-DD HH:MM:SS,MMSI,MessageType,AIS_MessageString*]
+
+---
+
+# AIS
+
+## Raw
+
+* Encoded 6 bit binary ASCII format
+* Position (GNSS); timestamp; vessel type; vessel ID
+* Year 2014: 2 billion messages - 260GB
+* Fuel use from ship technical specifications
+
+&lt;/br&gt;
+## Pre-processed
+
+* 10GB .csv: fuel use/ship type/trip type/1km x 1km grid square
+
+&lt;/br&gt;
+`$$Fuel use_f . {Emission factor}_p=Emission_p$$`
+
+---
+
+# End product
+
+* Gridded data for Uk waters and beyond
+* Annually reproducible workflow
+  * Efficient
+  * Modifiable
+  * Easy to Rre-purpose
+  * Transparent - auditing
+
+* Plays with legacy systems
+  * Excel
+  * MS Access
+  * .aml
+
+
+---
+
+# Testing
+
+R
+
+SQLite
+
+PostgreSQL
+
+---
+
+# Data flow
+
+DIAGRAM!
+
+
+Import: shell
+
+Data cleaning: R, dplyr, data.table, SQL
+
+
+
+R, GitLab, PostgreSQL
+
+
+ArcGIS server
+.aml
+GeoTiff
+Statistics
+
+---
+
+# Calculate fuel consumption
+
+Chunking
+
+1. Get chunking variable
+2. Fetch chunk from database
+3. Process
+4. Save back to database (create or append table)
+5. If more chunks remain repeat 2 to 4 else 6
+6. Stop
+
+---
+
+# Chunking
+
+
+
+```r
+library(dbplyr)
+
+# Sourced from paramters.R file
+chunk_name &lt;- "myVar" # Chunking variable
+table_name &lt;- "myTable" # Raw table name
+new_table_name &lt;- "myNewTable" # Processed tbale name
+
+# Get variables to chunk with
+chunk_grp_sql &lt;- build_sql("SELECT DISTINCT ", sql(chunk_name), 
+                           " FROM ", sql(table_name))
+message("Getting chunking variable...")
+```
+
+
+{{
+# Split chunkvar into chunks
+i &lt;- 1 # Counter
+chunk_frac &lt;- 15 # Proportion of chunking variable to be read in at each pass
+
+message("Splitting chunking variable into ", chunk_frac, " groups...")
+chunk_split &lt;- split(chunk_ref, sort(chunk_ref%%chunk_frac)) # Split chunk variable vector into parts for processing 
+max &lt;- max(length(chunk_split))
+}}
+
+For loop over chunkvar chunks...
+
+{{
+library(DBI)
+library(dplyr)
+
+for(i in 1:max) {
+
+# Connect to db &gt; pull chunk records...
+# Created get_chunk function
+chunk_data &lt;- get_chunk_fun(conn, table_name, chunk_start, chunk_end, chunk)
+
+# ...&gt; R process... 
+# Created get_chunk function
+output &lt;- get_fuel_fun(chunk_data, ...)
+
+# ...&gt; write to db
+dbWriteTable(conn, new_table_name, output, col_classes)
+
+}
+
+}}
+
+
+---
+
+# Spatial data processing and outputs
+
+Nested data frames
+
+Data normalisation: cell updates
+
+`purrr::walk`
+
+Use `purrr` to apply a function that:
+1. Joins emissions to points by grid ID
+2. Assigns emissions to raster cells
+3. Writes raster to file
+
+
+{{
+system.time({
+  ship_nest &lt;- ship_df_offshore %&gt;% group_by(year, pollutant) %&gt;% 
+    nest() %&gt;%
+    filter(year != 2014)
+})
+
+}}
+
+Benchmark: 2018-05-02
+user  system elapsed 
+   8.19    1.81   10.02
+
+{{
+# Make null raster
+# Needed to accept gridded emission values into cells based on grid cell x, y values 
+
+# Set some parameteres 
+system.time({
+  bng &lt;- '+proj=tmerc +lat_0=49 +lon_0=-2 +k=0.9996012717 +x_0=400000 +y_0=-100000 +ellps=airy +datum=OSGB36 +units=m +no_defs'
+  r_ext &lt;- raster::extent(r)
+  r_ncol &lt;- raster::ncol(r)
+  r_nrow &lt;- raster::nrow(r)
+  
+  # Make raster
+  r_emissions &lt;- raster::raster(x = r_ext, nrows = r_nrow, ncols = r_ncol, crs = bng)
+})
+}}
+
+Benchmark: 2018-05-02
+user  system elapsed 
+   0.00    0.00    0.02
+
+
+{{
+source(here("scripts/R/emission_raster.R"))
+
+system.time({
+    
+  path &lt;- here("data/gis/mapping_grids")
+  
+  ship_em_nest &lt;- ship_nest %&gt;% 
+    mutate(raster = map(data, ~ emission_raster(., point_df, r_emissions))) %&gt;%
+    select(year, pollutant, raster) %&gt;%
+    pwalk(function(year, pollutant, raster) raster::writeRaster(raster, filename = paste0(path, "/", year, "_", pollutant), format = "GTiff"))
+
+})
+}}
+
+
+---
+
+# Experiences
+
+
+
+---
+
+# Lessons
+
+* RAM is cheap: hours expensive
+* Package management!
+* Docker...
+
+---
+    </textarea>
+<style data-target="print-only">@media screen {.remark-slide-container{display:block;}.remark-slide-scaler{box-shadow:none;}}</style>
+<script src="https://remarkjs.com/downloads/remark-latest.min.js"></script>
+<script src="scripts/macros.js"></script>
+<script>var slideshow = remark.create({
+"highlightStyle": "github",
+"highlightLines": true,
+"countIncrementalSlides": true
+});
+if (window.HTMLWidgets) slideshow.on('afterShowSlide', function (slide) {
+  window.dispatchEvent(new Event('resize'));
+});
+(function(d) {
+  var s = d.createElement("style"), r = d.querySelector(".remark-slide-scaler");
+  if (!r) return;
+  s.type = "text/css"; s.innerHTML = "@page {size: " + r.style.width + " " + r.style.height +"; }";
+  d.head.appendChild(s);
+})(document);
+
+(function(d) {
+  var el = d.getElementsByClassName("remark-slides-area");
+  if (!el) return;
+  var slide, slides = slideshow.getSlides(), els = el[0].children;
+  for (var i = 1; i < slides.length; i++) {
+    slide = slides[i];
+    if (slide.properties.continued === "true" || slide.properties.count === "false") {
+      els[i - 1].className += ' has-continuation';
+    }
+  }
+  var s = d.createElement("style");
+  s.type = "text/css"; s.innerHTML = "@media print { .has-continuation { display: none; } }";
+  d.head.appendChild(s);
+})(document);
+// delete the temporary CSS (for displaying all slides initially) when the user
+// starts to view slides
+(function() {
+  var deleted = false;
+  slideshow.on('beforeShowSlide', function(slide) {
+    if (deleted) return;
+    var sheets = document.styleSheets, node;
+    for (var i = 0; i < sheets.length; i++) {
+      node = sheets[i].ownerNode;
+      if (node.dataset["target"] !== "print-only") continue;
+      node.parentNode.removeChild(node);
+    }
+    deleted = true;
+  });
+})();</script>
+
+<script>
+(function() {
+  var links = document.getElementsByTagName('a');
+  for (var i = 0; i < links.length; i++) {
+    if (/^(https?:)?\/\//.test(links[i].getAttribute('href'))) {
+      links[i].target = '_blank';
+    }
+  }
+})();
+</script>
+
+<script>
+slideshow._releaseMath = function(el) {
+  var i, text, code, codes = el.getElementsByTagName('code');
+  for (i = 0; i < codes.length;) {
+    code = codes[i];
+    if (code.parentNode.tagName !== 'PRE' && code.childElementCount === 0) {
+      text = code.textContent;
+      if (/^\\\((.|\s)+\\\)$/.test(text) || /^\\\[(.|\s)+\\\]$/.test(text) ||
+          /^\$\$(.|\s)+\$\$$/.test(text) ||
+          /^\\begin\{([^}]+)\}(.|\s)+\\end\{[^}]+\}$/.test(text)) {
+        code.outerHTML = code.innerHTML;  // remove <code></code>
+        continue;
+      }
+    }
+    i++;
+  }
+};
+slideshow._releaseMath(document);
+</script>
+<!-- dynamically load mathjax for compatibility with self-contained -->
+<script>
+(function () {
+  var script = document.createElement('script');
+  script.type = 'text/javascript';
+  script.src  = 'https://mathjax.rstudio.com/latest/MathJax.js?config=TeX-MML-AM_CHTML';
+  if (location.protocol !== 'file:' && /^https?:/.test(script.src))
+    script.src  = script.src.replace(/^https?:/, '');
+  document.getElementsByTagName('head')[0].appendChild(script);
+})();
+</script>
+  </body>
+</html>

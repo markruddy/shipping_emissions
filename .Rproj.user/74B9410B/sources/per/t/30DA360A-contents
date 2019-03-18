@@ -1,0 +1,288 @@
+---
+title: "Shipping emissions"
+subtitle: "Getting closer to the funnel"
+author: "</br>Mark Ruddy"
+# institute: "RStudio, Inc."
+date: "2019-03-19"
+output:
+  xaringan::moon_reader:
+    css: [shinobi_tweak, tamu-fonts] 
+    lib_dir: libs
+    seal: TRUE
+    nature:
+      highlightStyle: github
+      highlightLines: true
+      countIncrementalSlides: true
+      beforeInit: "scripts/macros.js"
+---
+
+```{r setup, include=FALSE}
+options(htmltools.dir.version = FALSE)
+```
+
+layout: true
+
+background-color: var(--main-color4)
+
+---
+class: middle, center
+
+# Annual atmospheric pollution from UK shipping
+
+<iframe width="700" height="500" src="https://ricardo-aea.maps.arcgis.com/apps/StorytellingSwipe/index.html?appid=b52b396c0f314723a166aa552209f544" frameborder="0" allow="encrypted-media" allowfullscreen></iframe>
+
+---
+
+# What I'll be talking about
+
+* Public domain
+* Last step: calculate and map emissions
+* Journey: personal thoughts and experiences
+* Improvements
+
+--
+
+</br>
+
+# What I *won't* be talking about
+
+* Client/employer confidentiality
+* IP
+* **Group effort!**
+
+
+---
+
+# AIS (Automtic Identification System) data
+
+.center[![:scale 70%](images/ais.jpg)]
+.small[Image credit: ][Aeromarine SRT](https://gmdsstesters.com/)
+
+</br>
+.center[*YYYY-MM-DD HH:MM:SS,MMSI,MessageType,AIS_MessageString*]
+
+---
+
+# AIS
+
+## Raw
+
+* Encoded 6 bit binary ASCII format
+* Position (GNSS); timestamp; vessel type; vessel ID
+* Year 2014: 2 billion messages - 260GB
+* Fuel use from ship technical specifications
+
+</br>
+## Pre-processed
+
+* 10GB .csv: fuel use/ship type/trip type/1km x 1km grid square
+
+</br>
+$$Fuel use_f . {Emission factor}_p=Emission_p$$
+
+---
+
+# End product
+
+* Gridded data for Uk waters and beyond
+* Annually reproducible workflow
+  * Efficient
+  * Modifiable
+  * Easy to Rre-purpose
+  * Transparent - auditing
+
+* Plays with legacy systems
+  * Excel
+  * MS Access
+  * .aml
+
+
+---
+
+* Import
+* Explore
+* Communicate
+
+---
+
+# Testing
+
+R
+
+SQLite
+
+PostgreSQL
+
+---
+
+# Data flow
+
+DIAGRAM!
+
+
+Import: shell
+
+Data cleaning: R, dplyr, data.table, SQL
+
+
+
+R, GitLab, PostgreSQL
+
+
+ArcGIS server
+.aml
+GeoTiff
+Statistics
+
+---
+
+# Calculate fuel consumption
+
+Chunking
+
+1. Get chunking variable
+2. Fetch chunk from database
+3. Process
+4. Save back to database (create or append table)
+5. If more chunks remain repeat 2 to 4 else 6
+6. Stop
+
+---
+
+# Chunking
+
+
+```{r eval=FALSE}
+library(dbplyr)
+library(DBI)
+
+# Sourced from paramters.R file
+chunk_name <- "myVar" # Chunking variable
+table_name <- "myTable" # Raw table name
+new_table_name <- "myNewTable" # Processed tbale name
+
+# Get variables to chunk with
+chunk_grp_sql <- build_sql("SELECT DISTINCT ", sql(chunk_name), 
+                           " FROM ", sql(table_name))
+message("Getting chunking variable...")
+chunk_vars <- dbSendQuery(conn, chunk_grp_sql)
+```
+
+
+{{
+# Split chunkvar into chunks
+i <- 1 # Counter
+chunk_frac <- 15 # Proportion of chunking variable to be read in at each pass
+
+message("Splitting chunking variable into ", chunk_frac, " groups...")
+chunk_split <- split(chunk_vars, sort(chunk_vars%%chunk_frac)) # Split chunk variable vector into parts for processing 
+max <- max(length(chunk_split))
+}}
+
+For loop over chunk_var chunks...
+
+{{
+library(DBI)
+library(dplyr)
+
+for(i in 1:max) {
+
+# Connect to db > pull chunk records...
+# Created get_chunk function
+chunk_data <- get_chunk_fun(conn, table_name, chunk_start, chunk_end, chunk)
+
+# ...> R process... 
+# Created get_chunk function
+output <- get_fuel_fun(chunk_data, ...)
+
+# ...> write to db
+dbWriteTable(conn, new_table_name, output, col_classes)
+
+}
+
+}}
+
+
+---
+
+# Spatial data processing and outputs
+
+Nested data frames
+
+Data normalisation: cell updates
+
+`purrr::walk`
+
+Use `purrr` to apply a function that:
+1. Joins emissions to points by grid ID
+2. Assigns emissions to raster cells
+3. Writes raster to file
+
+
+{{
+system.time({
+  ship_nest <- ship_df_offshore %>% group_by(year, pollutant) %>% 
+    nest() %>%
+    filter(year != 2014)
+})
+
+}}
+
+Benchmark: 2018-05-02
+user  system elapsed 
+   8.19    1.81   10.02
+
+{{
+# Make null raster
+# Needed to accept gridded emission values into cells based on grid cell x, y values 
+
+# Set some parameteres 
+system.time({
+  bng <- '+proj=tmerc +lat_0=49 +lon_0=-2 +k=0.9996012717 +x_0=400000 +y_0=-100000 +ellps=airy +datum=OSGB36 +units=m +no_defs'
+  r_ext <- raster::extent(r)
+  r_ncol <- raster::ncol(r)
+  r_nrow <- raster::nrow(r)
+  
+  # Make raster
+  r_emissions <- raster::raster(x = r_ext, nrows = r_nrow, ncols = r_ncol, crs = bng)
+})
+}}
+
+Benchmark: 2018-05-02
+user  system elapsed 
+   0.00    0.00    0.02
+
+
+{{
+source(here("scripts/R/emission_raster.R"))
+
+system.time({
+    
+  path <- here("data/gis/mapping_grids")
+  
+  ship_em_nest <- ship_nest %>% 
+    mutate(raster = map(data, ~ emission_raster(., point_df, r_emissions))) %>%
+    select(year, pollutant, raster) %>%
+    pwalk(function(year, pollutant, raster) raster::writeRaster(raster, filename = paste0(path, "/", year, "_", pollutant), format = "GTiff"))
+
+})
+}}
+
+
+---
+
+# Experiences
+
+
+
+---
+
+# Lessons
+
+* RAM is cheap: hours expensive
+* Package management!
+* Docker...
+
+---
+
+
